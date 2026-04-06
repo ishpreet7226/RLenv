@@ -1,0 +1,41 @@
+name: anti_gravity_control_env_v1
+description: Environment for autonomous stabilization of experimental anti-gravity propulsion fields under disturbance, energy, and oscillation constraints.
+version: 1.0.0
+entrypoint: env.environment:AntiGravityControlEnv
+max_steps: 100
+reward_range:
+  min: 0.0
+  max: 1.0
+
+tasks:
+  - name: hover
+    difficulty: easy
+    grader: env.graders:grade_hover
+    success_threshold: 0.8
+  - name: disturbance
+    difficulty: medium
+    grader: env.graders:grade_disturbance
+    success_threshold: 0.75
+  - name: efficiency
+    difficulty: hard
+    grader: env.graders:grade_efficiency
+    success_threshold: 0.7
+
+action_space:
+  - increase_lift
+  - decrease_lift
+  - stabilize_field
+  - redistribute_energy
+  - lock_altitude
+  - emergency_shutdown
+
+observation_space:
+  - current_altitude
+  - vertical_velocity
+  - field_stability_score
+  - energy_remaining
+  - oscillation_level
+  - external_disturbance
+  - target_altitude
+  - steps_remaining
+  - history
