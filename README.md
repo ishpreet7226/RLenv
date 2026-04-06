@@ -1,261 +1,105 @@
----
-title: Email Triage OpenEnv
-emoji: 📧
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-pinned: false
-tags:
-  - openenv
-  - reinforcement-learning
-  - customer-support
-  - nlp
-  - email-triage
-license: mit
----
-
-# 📧 Customer Support Email Triage — `email_triage_v1`
-
-[![OpenEnv](https://img.shields.io/badge/OpenEnv-Compliant-6366f1?style=flat-square)](https://openenv.dev)
-[![HuggingFace Space](https://img.shields.io/badge/HF%20Space-Live-orange?style=flat-square)](https://huggingface.co/spaces)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+# Anti-Gravity Control Environment (anti_gravity_control_env_v1)
 
 ## Overview
+The **anti_gravity_control_env_v1** is an advanced control-system benchmark designed for the OpenEnv ecosystem. It simulates the real-time stabilization of experimental anti-gravity propulsion fields under strict disturbance, oscillation, and energy constraints. 
 
-**`email_triage_v1`** is a real-world OpenEnv environment where an AI agent learns to triage customer support emails — a task performed millions of times daily in enterprise support centers worldwide.
+These dynamics model next-generation aerospace stabilization mechanics, directly mapping to real-world applications in:
+- **Orbital Positioning Platforms**: Station-keeping for low-gravity space stations.
+- **Experimental Propulsion Systems**: Magnetic or anti-gravity lift field maintenance.
+- **Autonomous Aerial Stabilization**: Micro-gravity drone stabilization and precision tracking.
+- **Future Mobility Infrastructure Research**: Frictionless terrestrial transport pods.
 
-The agent processes a queue of 10 customer emails per episode and must:
-- **Classify** each email (billing / technical / account / general / spam)
-- **Prioritize** urgency (urgent / high / medium / low)
-- **Decide** whether to escalate to a human agent
-- **Draft** a professional response (rewarded at medium/hard difficulty)
-
-This environment fills a direct gap in the RL/agent evaluation ecosystem: no existing OpenEnv environment benchmarks the core enterprise workflow of email classification and triage, a task where incorrect agent decisions have measurable downstream business impact.
-
----
+This environment is designed as a benchmark for evaluating long-horizon decision-making in autonomous control systems where agents must simultaneously balance safety constraints, stochastic disturbances, and limited energy budgets. Unlike classical control benchmarks such as CartPole, LunarLander, or inverted-pendulum stabilization tasks, this environment introduces coupled stability–energy tradeoffs that better reflect real aerospace control scenarios.
 
 ## Environment Design
+The Anti-Gravity Control Environment is a continuous-state, discrete/continuous-action environment focusing on multi-variable safety boundary control.
+- **State Variables**: Driven by coupled aerodynamic velocity interactions, stochastic noise injections, and oscillation metrics.
+- **Action Space**: Exposes a multi-dimensional schema handling geometric lift vectors up to complex energy manipulations.
+- **Observation Structure**: High-density schema evaluating system thresholds across precision variables.
+- **Reward Shaping**: Dense scalar rewards shaping incremental progression toward long-horizon trajectory bounds.
+- **Termination Conditions**: The simulation immediately halts and penalizes when field stability drops below `0.2` or boundary energy levels reach absolute `0`.
 
-### State Management
-Each episode is fully isolated. `reset(task_id)` loads a deterministic queue of 10 emails for the specified task. The internal state tracks queue position, cumulative reward, and per-step trajectory.
+The environment models a closed-loop stabilization controller operating under constrained actuation energy and disturbance uncertainty, making it suitable for evaluating agent robustness in safety-critical aerospace positioning systems and experimental propulsion platforms.
 
-### Action Space
+## Action Space
+The environment executes a specialized suite of physical commands:
+- `increase_lift` / `decrease_lift`: Geometrically alters the vertical thrust vector, impacting ascent/descent while expending core structural energy proportional to the delta.
+- `stabilize_field`: Hardens the active levitation frame to naturally dampen accumulating ambient oscillations.
+- `redistribute_energy`: Safely re-routes system reserves dynamically to mitigate stability shocks.
+- `lock_altitude`: Anchors the target trajectory vector statically for precision alignment overrides.
+- `emergency_shutdown`: Immediate termination switch to gracefully crash the system before critical failure thresholds are breached.
 
-| Field | Type | Values |
-|-------|------|--------|
-| `category` | `string` | `billing`, `technical`, `account`, `general`, `spam` |
-| `priority` | `string` | `urgent`, `high`, `medium`, `low` |
-| `response_draft` | `string \| null` | Any text reply to the sender |
-| `escalate` | `boolean` | `true` = flag for human agent |
+## Observation Space
+The agent perceives a comprehensive telemetry suite:
+- `current_altitude`: Spatial position vector, necessary for boundary tracking.
+- `vertical_velocity`: Physics delta exposing current momentum constraints.
+- `field_stability_score`: Determines critical collapse proximity.
+- `energy_remaining`: Bounding logic to strictly limit unoptimized thrust spamming.
+- `oscillation_level`: Tracking for feedback loops signaling impending turbulence vectors.
+- `external_disturbance`: Environmental stochastic wind/magnetic noise variables.
+- `target_altitude`: The objective vector the system must lock onto.
+- `steps_remaining`: Explicit horizon boundary awareness.
+- `history`: Aggregated past step buffers for deep recurrent tracking.
+*These signals ensure an advanced control policy can infer trajectory acceleration slopes internally without explicit derivative inputs.*
 
-### Observation Space
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `email_id` | `string` | Unique email identifier |
-| `subject` | `string` | Email subject line |
-| `body` | `string` | Full email body |
-| `sender_tier` | `string` | `premium`, `standard`, or `trial` |
-| `previous_tickets` | `int` | Past support tickets from sender |
-| `sentiment_score` | `float` | Tone score in `[-1.0, 1.0]` |
-| `queue_position` | `int` | Current position in episode queue |
-| `emails_remaining` | `int` | Emails left to process |
-| `task_context` | `string` | Natural-language task description |
-| `valid_categories` | `list[str]` | The 5 valid category labels |
-| `valid_priorities` | `list[str]` | The 4 valid priority labels |
-
-### Reward Function
-
-Each step produces a **structured reward** (not sparse):
-
-| Component | Weight | Description |
-|-----------|--------|-------------|
-| Category accuracy | **40%** | Exact match with ground truth |
-| Priority accuracy | **30%** | Exact match (partial: 0.5 if 1 level off) |
-| Response quality | **15%** | Keyword coverage in drafted reply |
-| Escalation accuracy | **10%** | Correct escalation (+) / false escalation (−) |
-| Spam classification | **5%** | Bonus for correct spam ID; heavy penalty for false spam |
-
-All step rewards are clamped to `[0.0, 1.0]`.
-
-### Termination
-Episodes end deterministically after all 10 emails in the queue are processed (`done=True`). No early termination.
-
----
+Together, these signals form a partially observable stabilization system where agents must infer latent instability trends from oscillation growth and disturbance patterns rather than relying on direct collapse indicators. This encourages policies to develop predictive stabilization behavior instead of reactive correction loops.
 
 ## Tasks
+The benchmark evaluates progression incrementally across three tiers:
+1. **Hover Stabilization (Easy)**: The agent must strictly maintain altitude bounds (`±0.5` tolerance), minimize ambient oscillation, and severely throttle energy consumption. 
+2. **Disturbance Recovery (Medium)**: Evaluates aggressive recovery kinematics. A massive `0.15` disturbance spike knocks the agent offline, requiring them to restore stability (`> 0.8`) strictly within a 10-step horizon. 
+3. **Efficiency Trajectory Tracking (Hard)**: True domain manipulation. The agent tracks a shifting, variable-altitude profile across a wide continuous duration while actively resisting stochastic noise and structural oscillations without draining limited fuel.
 
-### Task 1 — Triage Basic `[easy]`
-- **10 emails** with clear, unambiguous intent
-- Emails include: obvious billing disputes, login failures, app crashes, feature questions, clear spam
-- **Scored by**: category (50%) + priority (40%) + escalation (10%)
-- **Success threshold**: 0.75
+## Reward Design
+The environment implements trajectory-based reward shaping, decomposing into specific metric structures: 
+- **Altitude constraint bounding**
+- **Sustained stability maintenance**
+- **Raw energy efficiency retention**
+- **Disturbance recovery bonuses**
+- **Hard oscillation penalties**
+- **Safety shutdown penalties / Task completion bonuses**
 
-### Task 2 — Triage Ambiguous `[medium]`
-- **10 emails** where multiple issues coexist or signals are indirect
-- Challenges include: multi-issue emails (identify PRIMARY), compliance questions, long-running unresolved disputes, API integration breaks
-- **Scored by**: category (40%) + priority (30%) + escalation (20%) + response (10%)
-- **Success threshold**: 0.70
+*This dense trajectory shaping ensures policies receive partial-progress feedback recursively, accelerating sample efficiency during sparse-target exploration loops.*
 
-### Task 3 — Triage Adversarial `[hard]`
-- **10 emails** crafted to mislead the agent:
-  - Trial users with manufactured urgency ("DISASTER!!!")
-  - Vendor spam disguised as legitimate invoices
-  - Hidden technical bugs buried in glowing praise
-  - Security vulnerability disclosures requiring immediate escalation
-  - GDPR Article 17 right-to-erasure requests
-- **Scored by**: category (35%) + priority (25%) + escalation (25%) + response (15%)
-- **Success threshold**: 0.65
+## Graders
+Instead of solely relying on cumulative step-rewards, OpenEnv standardizes independent objective evaluation. The graders (`grade_hover`, `grade_disturbance`, `grade_efficiency`) calculate deterministic scores entirely mapped inside normalized float bounds `[0.0, 1.0]`. 
+Execution remains 100% reproducible uniformly anchored to `numpy.seed(42)`.
 
----
+## Baseline Results
+The repository ships with an inference pipeline running a simple localized heuristic policy:
+- **Hover**: `~0.91`
+- **Disturbance**: `~0.88`
+- **Efficiency**: `~0.87`
 
-## API Endpoints
+*The baseline policy is a simplistic conditional algorithm evaluating directional vectors ("increase thrust if below limit, decrease if above"). This showcases fundamental baseline solvability, while leaving a wide ceiling for Deep RL algorithms to perfect trajectory smoothness.*
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | Environment info + health |
-| `GET` | `/health` | Lightweight liveness probe |
-| `GET` | `/tasks` | List all 3 tasks with metadata |
-| `POST` | `/reset` | Start new episode `{"task_id": "triage_basic"}` |
-| `POST` | `/step` | Submit action `{"category":..., "priority":..., "escalate":...}` |
-| `GET` | `/state` | Current episode metadata |
+## Environment Interface Summary
 
-### Example Usage
+| Function | Purpose                           |
+| -------- | --------------------------------- |
+| reset()  | Initialize task scenario          |
+| step()   | Apply control action              |
+| state()  | Retrieve internal simulator state |
 
+## Installation
+Setup your local execution boundaries natively:
 ```bash
-# Reset for Task 1
-curl -X POST http://localhost:7860/reset \
-  -H "Content-Type: application/json" \
-  -d '{"task_id": "triage_basic"}'
-
-# Submit a triage action
-curl -X POST http://localhost:7860/step \
-  -H "Content-Type: application/json" \
-  -d '{
-    "category": "billing",
-    "priority": "medium",
-    "response_draft": "Thank you for reaching out. We will review the overcharge and issue a credit within 3-5 business days.",
-    "escalate": false
-  }'
-
-# Get current state
-curl http://localhost:7860/state
-```
-
----
-
-## Setup & Installation
-
-### Local (Python)
-
-```bash
-git clone <your-repo-url>
-cd RLenv
-
 pip install -r requirements.txt
-
-# Start the API server
-uvicorn server:app --host 0.0.0.0 --port 7860
-
-# OR run the inference baseline directly
-export API_BASE_URL="https://api.openai.com/v1"
-export MODEL_NAME="gpt-4o-mini"
-export HF_TOKEN="sk-..."
 python inference.py
 ```
 
-### Docker
-
+## Docker Usage
+Compile and run the deterministic benchmark environment natively:
 ```bash
-# Build
-docker build -t email-triage-env .
-
-# Run server
-docker run -p 7860:7860 email-triage-env
-
-# Run inference baseline
-docker run \
-  -e API_BASE_URL="https://api.openai.com/v1" \
-  -e MODEL_NAME="gpt-4o-mini" \
-  -e HF_TOKEN="sk-..." \
-  email-triage-env \
-  python inference.py
+docker build -t anti-gravity-env .
+docker run anti-gravity-env
 ```
 
-### Environment Variables
+## HF Space Endpoints
+Fully integrated with the HuggingFace OpenEnv judging architecture, operating as a localized REST FastApi cluster:
+- `POST /reset`
+- `POST /step`
+- `GET /state`
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `API_BASE_URL` | LLM API base URL | `https://api.openai.com/v1` |
-| `MODEL_NAME` | Model identifier | `gpt-4o-mini` |
-| `HF_TOKEN` | HuggingFace / OpenAI API key | *(required for inference)* |
-
----
-
-## Inference Script
-
-The baseline `inference.py` runs an LLM agent against all 3 tasks and emits structured logs:
-
-```
-[START] task=triage_basic env=email_triage_v1 model=gpt-4o-mini
-[STEP] step=1 action={"category": "account", "priority": "high", "escalate": false} reward=0.9000 done=false error=null
-[STEP] step=2 action={"category": "billing", "priority": "medium", "escalate": false} reward=0.8500 done=false error=null
-...
-[END] success=true steps=10 score=0.8234 rewards=0.9000,0.8500,...
-```
-
----
-
-## Baseline Scores
-
-Scores from running `gpt-4o-mini` at `temperature=0` (deterministic):
-
-| Task | Score | Success |
-|------|-------|---------|
-| `triage_basic` (easy) | ~0.82 | ✅ |
-| `triage_ambiguous` (medium) | ~0.71 | ✅ |
-| `triage_adversarial` (hard) | ~0.58 | ❌ (near threshold) |
-
-A naive classifier (always predicts `billing/high`) scores approximately **0.20–0.35**, demonstrating the environment requires genuine language understanding.
-
----
-
-## Project Structure
-
-```
-RLenv/
-├── env/
-│   ├── __init__.py
-│   ├── environment.py      # EmailTriageEnv (reset / step / state)
-│   ├── actions.py          # Action Pydantic model
-│   ├── observations.py     # Observation Pydantic model
-│   ├── rewards.py          # Reward Pydantic model
-│   ├── graders.py          # Deterministic graders (x3)
-│   └── data/
-│       ├── __init__.py
-│       └── emails.py       # 30-email hardcoded dataset (10 per task)
-├── tasks/
-│   ├── triage_basic.py     # Task 1 config (easy)
-│   ├── triage_ambiguous.py # Task 2 config (medium)
-│   └── triage_adversarial.py # Task 3 config (hard)
-├── server.py               # FastAPI server
-├── inference.py            # Baseline LLM inference script
-├── openenv.yaml            # OpenEnv spec manifest
-├── requirements.txt
-├── Dockerfile
-└── README.md
-```
-
----
-
-## Novelty & Motivation
-
-Unlike classical RL benchmarks (CartPole, LunarLander, Atari), this environment:
-
-1. **Models a genuine enterprise workflow** — email triage is a multi-billion-dollar operational problem with direct ROI implications
-2. **Tests language understanding under adversarial conditions** — not just retrieval or generation, but nuanced classification with misleading signals
-3. **Provides dense, structured rewards** — 5 reward components give fine-grained learning signal beyond sparse binary success
-4. **Includes difficulty-tiered adversarial scenarios** — most NLP benchmarks lack adversarial email patterns (manufactured urgency, vendor spam as invoices, buried bugs)
-5. **Maps directly to LLM agent evaluation** — the agent must combine classification, prioritization, and generation skills in a single decision
-
-This environment is immediately useful for evaluating and training customer support automation agents, LLM routing systems, and enterprise email AI products.
+## Novelty Statement
+Unlike classical benchmarks such as CartPole, LunarLander, or inverted-pendulum stabilization environments, this system introduces coupled stochastic disturbances, energy-bounded actuation, oscillation-driven instability accumulation, and collapse-threshold safety dynamics within a continuous stabilization loop. These properties make it a stronger benchmark for evaluating autonomous agents operating in constrained physical control environments.

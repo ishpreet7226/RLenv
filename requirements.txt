@@ -1,7 +1,7 @@
-pydantic>=2.0
+pydantic
 numpy
-fastapi>=0.100.0
-uvicorn[standard]>=0.20.0
-openai>=1.0
+fastapi
+uvicorn
+openenv-core
+openai
 python-dotenv
-openenv-core>=0.2.0
