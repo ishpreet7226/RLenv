@@ -1,41 +1,93 @@
-name: anti_gravity_control_env_v1
-description: Environment for autonomous stabilization of experimental anti-gravity propulsion fields under disturbance, energy, and oscillation constraints.
+name: email_triage_v1
+description: >
+  Customer Support Email Triage — an OpenEnv environment where an AI agent
+  learns to classify, prioritize, escalate, and reply to customer support
+  emails. Simulates a real task performed millions of times daily in enterprise
+  support centers.
 version: 1.0.0
-entrypoint: env.environment:AntiGravityControlEnv
-max_steps: 100
+spec_version: 1
+type: space
+entrypoint: env.environment:EmailTriageEnv
+runtime: docker
+app: server:app
+port: 7860
+
 reward_range:
   min: 0.0
   max: 1.0
 
+max_steps: 10
+
 tasks:
-  - name: hover
+  - name: triage_basic
     difficulty: easy
-    grader: env.graders:grade_hover
-    success_threshold: 0.8
-  - name: disturbance
-    difficulty: medium
-    grader: env.graders:grade_disturbance
+    grader: env.graders:grade_triage_basic
     success_threshold: 0.75
-  - name: efficiency
+    description: "10 clear-cut emails — classify category and priority correctly."
+
+  - name: triage_ambiguous
+    difficulty: medium
+    grader: env.graders:grade_triage_ambiguous
+    success_threshold: 0.70
+    description: "10 ambiguous multi-issue emails — find the primary problem."
+
+  - name: triage_adversarial
     difficulty: hard
-    grader: env.graders:grade_efficiency
-    success_threshold: 0.7
+    grader: env.graders:grade_triage_adversarial
+    success_threshold: 0.65
+    description: "10 adversarial emails — resist inflation, catch spam, handle legal notices."
 
 action_space:
-  - increase_lift
-  - decrease_lift
-  - stabilize_field
-  - redistribute_energy
-  - lock_altitude
-  - emergency_shutdown
+  type: object
+  properties:
+    category:
+      type: string
+      enum: [billing, technical, account, general, spam]
+    priority:
+      type: string
+      enum: [urgent, high, medium, low]
+    response_draft:
+      type: string
+      nullable: true
+    escalate:
+      type: boolean
 
 observation_space:
-  - current_altitude
-  - vertical_velocity
-  - field_stability_score
-  - energy_remaining
-  - oscillation_level
-  - external_disturbance
-  - target_altitude
-  - steps_remaining
-  - history
+  type: object
+  properties:
+    email_id:
+      type: string
+    subject:
+      type: string
+    body:
+      type: string
+    sender_tier:
+      type: string
+      enum: [premium, standard, trial, none]
+    previous_tickets:
+      type: integer
+    sentiment_score:
+      type: number
+      minimum: -1.0
+      maximum: 1.0
+    queue_position:
+      type: integer
+    emails_remaining:
+      type: integer
+    task_context:
+      type: string
+    valid_categories:
+      type: array
+      items:
+        type: string
+    valid_priorities:
+      type: array
+      items:
+        type: string
+
+tags:
+  - openenv
+  - customer-support
+  - nlp
+  - email-triage
+  - real-world
