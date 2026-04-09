@@ -151,10 +151,11 @@ def list_tasks():
 
 
 @app.post("/reset")
-def reset_env(request: ResetRequest):
+def reset_env(request: Optional[ResetRequest] = None):
     """Initialize a new episode for the given task."""
     try:
-        obs = env.reset(request.task_id)
+        task_id = request.task_id if request is not None else "triage_basic"
+        obs = env.reset(task_id)
         return obs.model_dump()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
