@@ -1,101 +1,226 @@
+"""
+inference.py — Baseline inference script for the Customer Support Email Triage
+OpenEnv environment.
+
+Runs an LLM agent (via OpenAI-compatible API) against all 3 tasks and
+emits structured stdout logs in the required [START] / [STEP] / [END] format.
+
+Required environment variables:
+  API_BASE_URL   — LLM API base URL (default: https://api.openai.com/v1)
+  MODEL_NAME     — Model identifier  (default: gpt-4o-mini)
+  HF_TOKEN       — API key / HuggingFace token
+
+Usage:
+  python inference.py
+"""
+
 import os
 import sys
+import json
+import traceback
+from typing import Optional
 
-try:
-    from openai import OpenAI
-except ImportError:
-    pass
+from openai import OpenAI
 
-from env.environment import AntiGravityControlEnv
-from env.actions import Action, ActionType
-from env.graders import grade_hover, grade_disturbance, grade_efficiency
+from env.environment import EmailTriageEnv
+from env.actions import Action
+from env.graders import grade_triage_basic, grade_triage_ambiguous, grade_triage_adversarial
 
+# ── Configuration ──────────────────────────────────────────────────────────
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-3.5-turbo")
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+MODEL_NAME   = os.environ.get("MODEL_NAME",   "gpt-4o-mini")
+HF_TOKEN     = os.environ.get("HF_TOKEN",     "")
 
-def get_heuristic_action(env) -> Action:
-    # heuristic policy: increase_lift if altitude < target, decrease if >, stabilize otherwise
-    if env.current_altitude < env.target_altitude:
-        return Action(action_type=ActionType.INCREASE_LIFT, delta=1.0)
-    elif env.current_altitude > env.target_altitude:
-        return Action(action_type=ActionType.DECREASE_LIFT, delta=1.0)
-    else:
-        return Action(action_type=ActionType.STABILIZE_FIELD)
+# Task registry
+TASKS = [
+    {
+        "task_id":           "triage_basic",
+        "grader":            grade_triage_basic,
+        "success_threshold": 0.75,
+    },
+    {
+        "task_id":           "triage_ambiguous",
+        "grader":            grade_triage_ambiguous,
+        "success_threshold": 0.70,
+    },
+    {
+        "task_id":           "triage_adversarial",
+        "grader":            grade_triage_adversarial,
+        "success_threshold": 0.65,
+    },
+]
 
-def map_action_to_name(action: Action) -> str:
-    if action.action_type == ActionType.INCREASE_LIFT:
-        return "increase_lift"
-    elif action.action_type == ActionType.DECREASE_LIFT:
-        return "decrease_lift"
-    elif action.action_type == ActionType.STABILIZE_FIELD:
-        return "stabilize_field"
-    elif action.action_type == ActionType.LOCK_ALTITUDE:
-        return "lock_altitude"
-    elif action.action_type == ActionType.REDISTRIBUTE_ENERGY:
-        return "redistribute_energy"
-    elif action.action_type == ActionType.EMERGENCY_SHUTDOWN:
-        return "emergency_shutdown"
-    return "unknown"
+ENV_NAME = "email_triage_v1"
 
-def run_task(task_name, grader_func, success_threshold):
-    env = AntiGravityControlEnv()
-    obs = env.reset(task_name)
-    
-    print(f"[START] task={task_name} env=anti_gravity_control_env_v1 model={MODEL_NAME}")
-    
-    # Optional task-specific initializations
-    if task_name == "disturbance":
-        env.external_disturbance = 0.15
-        env.vertical_velocity += 0.15
-        
-    trajectory = []
-    rewards_history = []
-    
-    max_steps = 8
-    steps_taken = 0
-    done = False
-    
-    # Store initial state for grader
-    trajectory.append({
-        "altitude": env.current_altitude,
-        "stability": env.field_stability_score,
-        "energy_remaining": env.energy_remaining
-    })
-    
-    for i in range(1, max_steps + 1):
-        if done:
+# ── System prompt ──────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are an expert customer support triage agent.
+
+For each email you receive, respond with a valid JSON object containing:
+  - "category": one of ["billing", "technical", "account", "general", "spam"]
+  - "priority":  one of ["urgent", "high", "medium", "low"]
+  - "response_draft": a brief, professional reply to the customer (2-4 sentences)
+  - "escalate": true if this needs human escalation, false otherwise
+
+Triage guidelines:
+- billing:   payment issues, invoices, refunds, subscription changes, pricing
+- technical: bugs, crashes, API errors, integrations, performance issues
+- account:   login, password, account access, security, data deletion
+- general:   how-to questions, feature requests, compliance info
+- spam:      unsolicited commercial messages, phishing, vendor invoices you didn't request
+
+Priority:
+- urgent: production down, data loss, security breach, legal deadlines, double-charges on premium
+- high:   significant disruption, premium user issues, repeated unresolved problems
+- medium: moderate impact, standard issues with a clear path
+- low:    questions, minor bugs, informational requests
+
+Escalate when: security vulnerabilities, legal notices (GDPR, HIPAA), data breaches,
+               persistent unresolved issues (5+ previous tickets), post-cancellation charges.
+
+Do NOT escalate: trial users with inflated urgency, routine billing changes, general how-to.
+
+Respond ONLY with the JSON object. No markdown, no explanation."""
+
+# ── OpenAI client ──────────────────────────────────────────────────────────
+
+def get_client() -> OpenAI:
+    return OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
+
+
+def build_user_prompt(obs) -> str:
+    return f"""Email #{obs.queue_position} of {obs.queue_position + obs.emails_remaining - 1}
+
+Task context: {obs.task_context}
+
+--- EMAIL ---
+Subject: {obs.subject}
+From tier: {obs.sender_tier}
+Previous tickets: {obs.previous_tickets}
+Sentiment score: {obs.sentiment_score:.2f}  (-1=very negative, +1=very positive)
+
+{obs.body}
+--- END ---
+
+Valid categories: {obs.valid_categories}
+Valid priorities: {obs.valid_priorities}
+
+Respond with JSON only."""
+
+
+def call_llm(client: OpenAI, user_prompt: str) -> Optional[Action]:
+    """Call LLM and parse response into an Action. Returns None on failure."""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=400,
+        )
+        raw = response.choices[0].message.content.strip()
+
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+
+        data = json.loads(raw)
+        return Action(
+            category=data.get("category", "general"),
+            priority=data.get("priority", "medium"),
+            response_draft=data.get("response_draft", None),
+            escalate=bool(data.get("escalate", False)),
+        )
+    except Exception:
+        return None
+
+
+# ── Task runner ────────────────────────────────────────────────────────────
+
+def run_task(task_id: str, grader, success_threshold: float) -> None:
+    """Run a single task to completion and print structured logs."""
+    client = get_client()
+    env = EmailTriageEnv()
+
+    obs = env.reset(task_id)
+
+    print(f"[START] task={task_id} env={ENV_NAME} model={MODEL_NAME}")
+    sys.stdout.flush()
+
+    step_num    = 0
+    rewards     = []
+    done        = False
+
+    while not done:
+        step_num += 1
+        user_prompt = build_user_prompt(obs)
+        action = call_llm(client, user_prompt)
+
+        error_str = "null"
+        if action is None:
+            # Fallback action on parse failure
+            error_str = "parse_error"
+            action = Action(category="general", priority="medium", escalate=False)
+
+        try:
+            obs, reward, done, info = env.step(action)
+            step_reward = round(reward.step_reward, 2)
+            rewards.append(step_reward)
+
+            action_summary = json.dumps({
+                "category": action.category,
+                "priority": action.priority,
+                "escalate": action.escalate,
+            })
+
+            print(
+                f"[STEP] step={step_num} "
+                f"action={action_summary} "
+                f"reward={step_reward:.2f} "
+                f"done={str(done).lower()} "
+                f"error={error_str}"
+            )
+            sys.stdout.flush()
+
+        except Exception as e:
+            error_str = type(e).__name__
+            print(
+                f"[STEP] step={step_num} "
+                f"action=null "
+                f"reward=0.0000 "
+                f"done=false "
+                f"error={error_str}"
+            )
+            sys.stdout.flush()
             break
-            
-        action = get_heuristic_action(env)
-        action_name = map_action_to_name(action)
-        
-        obs, rew, done, info = env.step(action)
-        
-        trajectory.append({
-            "altitude": env.current_altitude,
-            "stability": env.field_stability_score,
-            "energy_remaining": env.energy_remaining
-        })
-        
-        rewards_history.append(rew.step_reward)
-        steps_taken += 1
-        
-        print(f"[STEP] step={i} action={action_name} reward={rew.step_reward:.2f} done={str(done).lower()} error=null")
-        
-    score = grader_func(trajectory)
-    success = score >= success_threshold
-    
-    rewards_str = ",".join([f"{r:.2f}" for r in rewards_history])
-    if not rewards_str:
-        rewards_str = "0.00"
-        
-    print(f"[END] success={str(success).lower()} steps={steps_taken} score={score:.4f} rewards={rewards_str}\n")
 
-def run_all_tasks():
-    run_task("hover", grade_hover, 0.8)
-    run_task("disturbance", grade_disturbance, 0.75)
-    run_task("efficiency", grade_efficiency, 0.7)
+    trajectory = env.get_trajectory()
+    score      = grader(trajectory)
+    success    = score >= success_threshold
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards) if rewards else "0.00"
+
+    print(
+        f"[END] success={str(success).lower()} "
+        f"steps={step_num} "
+        f"score={score:.2f} "
+        f"rewards={rewards_str}"
+    )
+    sys.stdout.flush()
+    print()  # blank line between tasks
+
+
+# ── Entry point ────────────────────────────────────────────────────────────
+
+def run_all_tasks() -> None:
+    for task in TASKS:
+        run_task(
+            task_id=task["task_id"],
+            grader=task["grader"],
+            success_threshold=task["success_threshold"],
+        )
+
 
 if __name__ == "__main__":
     run_all_tasks()
